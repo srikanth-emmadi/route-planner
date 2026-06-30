@@ -1,0 +1,367 @@
+import React, { useState, useEffect, useRef } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
+import './App.css';
+
+// Utils
+const APP_PASSWORD = "admin";
+
+const haversine = (a, b) => {
+  const R = 6371;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLon = (b.lon - a.lon) * Math.PI / 180;
+  const lat1 = a.lat * Math.PI / 180, lat2 = b.lat * Math.PI / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+
+const parseDMS = (str) => {
+  if (!str) return NaN;
+  str = str.trim().toUpperCase();
+  const decMatch = str.match(/^(-?\d+(?:\.\d+)?)\s*([NSEW])?$/);
+  if (decMatch) return parseFloat(decMatch[1]) * ((decMatch[2] === 'S' || decMatch[2] === 'W') ? -1 : 1);
+  const dmsMatch = str.match(/(\d+)[^0-9]+(\d+)[^0-9]+([\d\.]+)[^A-Z]*([NSEW])/i);
+  if (dmsMatch) return (parseFloat(dmsMatch[1]) + (parseFloat(dmsMatch[2]) / 60) + (parseFloat(dmsMatch[3]) / 3600)) * ((dmsMatch[4] === 'S' || dmsMatch[4] === 'W') ? -1 : 1);
+  const fb = str.match(/(-?\d+)[^0-9]+(\d+)[^0-9]+([\d\.]+)/);
+  if (fb) return (parseFloat(fb[1]) < 0 ? -1 : 1) * (Math.abs(parseFloat(fb[1])) + (parseFloat(fb[2]) / 60) + (parseFloat(fb[3]) / 3600));
+  return parseFloat(str);
+};
+
+export default function App() {
+  // Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState(false);
+
+  // App State
+  const [status, setStatus] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [suggestions, setSuggestions] = useState([]);
+  const [latQuery, setLatQuery] = useState("");
+  const [lonQuery, setLonQuery] = useState("");
+  
+  // Data State
+  const [stops, setStops] = useState([]); // UI array
+  const [legsUI, setLegsUI] = useState([]);
+  const [totalText, setTotalText] = useState("");
+
+  // Map Refs
+  const mapContainerRef = useRef(null);
+  const mapRef = useRef(null);
+  const distLabelsLayerRef = useRef(null);
+  const routeLineRef = useRef(null);
+  const stopsDataRef = useRef([]); // Holds Leaflet marker objects
+  const debounceTimer = useRef(null);
+
+  // Initialize Map
+  useEffect(() => {
+    if (isAuthenticated && mapContainerRef.current && !mapRef.current) {
+      mapRef.current = L.map(mapContainerRef.current, { preferCanvas: true }).setView([17.385, 78.486], 6);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(mapRef.current);
+      distLabelsLayerRef.current = L.layerGroup().addTo(mapRef.current);
+    }
+  }, [isAuthenticated]);
+
+  // Login handler
+  const handleLogin = () => {
+    if (password === APP_PASSWORD) setIsAuthenticated(true);
+    else setLoginError(true);
+  };
+
+  // Search handler
+  const handleSearchInput = (e) => {
+    const query = e.target.value;
+    setSearchQuery(query);
+    clearTimeout(debounceTimer.current);
+    if (query.length < 3) return setSuggestions([]);
+    
+    debounceTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`);
+        const data = await res.json();
+        setSuggestions(data);
+      } catch (err) { console.error(err); }
+    }, 400);
+  };
+
+  const setupDraggableLabel = (lat, lon, htmlClass, content, lineColor) => {
+    const pin = [lat, lon];
+    const leaderLine = L.polyline([pin, pin], { color: lineColor, weight: 2, dashArray: '4,4' }).addTo(mapRef.current);
+    const labelMarker = L.marker(pin, {
+      icon: L.divIcon({ className: 'custom-label-container', html: `<div class="${htmlClass}">${content}</div>`, iconSize: null, iconAnchor: [0, 15] }),
+      draggable: true
+    }).addTo(mapRef.current);
+    labelMarker.on('drag', (e) => leaderLine.setLatLngs([pin, e.target.getLatLng()]));
+    return { labelMarker, leaderLine };
+  };
+
+  const addDirectPlace = async (name, lat, lon) => {
+    const marker = L.marker([lat, lon]).addTo(mapRef.current).bindPopup(name);
+    const { labelMarker, leaderLine } = setupDraggableLabel(lat, lon, 'draggable-label', name, '#8b9bab');
+    
+    const newStop = { id: Date.now(), name, lat, lon, marker, labelMarker, leaderLine };
+    stopsDataRef.current.push(newStop);
+    updateStopsUI();
+    fitMap();
+    await computeRoute();
+    setStatus('');
+  };
+
+  const handleAddSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setSuggestions([]);
+    setStatus('Searching...');
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1`);
+      const data = await res.json();
+      if (!data.length) throw new Error('Not found');
+      setSearchQuery('');
+      await addDirectPlace(data[0].name || data[0].display_name.split(',')[0], parseFloat(data[0].lat), parseFloat(data[0].lon));
+    } catch (e) { setStatus('Could not find: ' + searchQuery); }
+  };
+
+  const handleAddCoords = async () => {
+    let lat = parseDMS(latQuery);
+    let lon = parseDMS(lonQuery);
+
+    if (!lonQuery && latQuery.length > 10) {
+      const splitMatch = latQuery.match(/([NS])\s*(.*)/i);
+      if (splitMatch) {
+        lat = parseDMS(latQuery.substring(0, splitMatch.index + 1));
+        lon = parseDMS(splitMatch[2]);
+      }
+    }
+    if (isNaN(lat) || isNaN(lon)) return setStatus('Enter valid coords');
+    
+    setLatQuery(''); setLonQuery('');
+    await addDirectPlace(`(${lat.toFixed(4)}, ${lon.toFixed(4)})`, lat, lon);
+  };
+
+  const updateStopsUI = () => setStops(stopsDataRef.current.map(s => ({ id: s.id, name: s.name })));
+
+  const fitMap = () => {
+    if (stopsDataRef.current.length === 0) return;
+    const bounds = L.latLngBounds(stopsDataRef.current.map(s => [s.lat, s.lon]));
+    mapRef.current.fitBounds(bounds, { padding: [40, 40] });
+  };
+
+  const renameStop = async (index) => {
+    const stop = stopsDataRef.current[index];
+    const newName = prompt('Enter site name:', stop.name);
+    if (!newName || !newName.trim()) return;
+    
+    stop.name = newName.trim();
+    stop.marker.setPopupContent(stop.name);
+    stop.labelMarker.setIcon(L.divIcon({
+      className: 'custom-label-container', html: `<div class="draggable-label">${stop.name}</div>`, iconSize: null, iconAnchor: [0, 15]
+    }));
+    updateStopsUI();
+    await computeRoute();
+  };
+
+  const removeStop = async (index) => {
+    const stop = stopsDataRef.current[index];
+    mapRef.current.removeLayer(stop.marker);
+    mapRef.current.removeLayer(stop.labelMarker);
+    mapRef.current.removeLayer(stop.leaderLine);
+    stopsDataRef.current.splice(index, 1);
+    updateStopsUI();
+    await computeRoute();
+  };
+
+  const optimizeRoute = async () => {
+    if (stopsDataRef.current.length < 3) return;
+    const start = stopsDataRef.current[0];
+    const rest = stopsDataRef.current.slice(1);
+    const ordered = [start];
+    while (rest.length) {
+      const last = ordered[ordered.length - 1];
+      let bestIdx = 0, bestDist = Infinity;
+      rest.forEach((s, idx) => {
+        const d = haversine(last, s);
+        if (d < bestDist) { bestDist = d; bestIdx = idx; }
+      });
+      ordered.push(rest.splice(bestIdx, 1)[0]);
+    }
+    stopsDataRef.current = ordered;
+    updateStopsUI();
+    await computeRoute();
+  };
+
+  const createDistDraggableLabel = (midLat, midLon, kmText) => {
+    const mid = [midLat, midLon];
+    const distLine = L.polyline([mid, mid], { color: '#ff7a45', weight: 1.5, dashArray: '4,4' }).addTo(distLabelsLayerRef.current);
+    const distLabelMarker = L.marker(mid, {
+      icon: L.divIcon({ className: 'custom-label-container', html: `<div class="dist-draggable-label">${kmText}</div>`, iconSize: null, iconAnchor: [0, 12] }),
+      draggable: true
+    }).addTo(distLabelsLayerRef.current);
+    distLabelMarker.on('drag', (e) => distLine.setLatLngs([mid, e.target.getLatLng()]));
+  };
+
+  const computeRoute = async () => {
+    if (routeLineRef.current) { mapRef.current.removeLayer(routeLineRef.current); routeLineRef.current = null; }
+    distLabelsLayerRef.current.clearLayers();
+    setLegsUI([]); setTotalText("");
+    const currStops = stopsDataRef.current;
+    if (currStops.length < 2) return;
+
+    setStatus('Calculating...');
+    const coords = currStops.map(s => `${s.lon},${s.lat}`).join(';');
+    try {
+      const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`);
+      const data = await res.json();
+      if (data.code !== 'Ok') throw new Error('routing failed');
+      
+      routeLineRef.current = L.geoJSON(data.routes[0].geometry, { style: { color: '#ff7a45', weight: 4 } }).addTo(mapRef.current);
+      
+      let totalKm = 0;
+      const newLegs = [];
+      data.routes[0].legs.forEach((leg, i) => {
+        const km = (leg.distance / 1000).toFixed(1);
+        const mins = Math.round(leg.duration / 60);
+        totalKm += leg.distance / 1000;
+        
+        newLegs.push({ from: currStops[i].name, to: currStops[i+1].name, km, mins, type: 'routed' });
+        createDistDraggableLabel((currStops[i].lat + currStops[i+1].lat)/2, (currStops[i].lon + currStops[i+1].lon)/2, `${km} km`);
+      });
+      setLegsUI(newLegs);
+      setTotalText(`Total: ${totalKm.toFixed(1)} km, ~${Math.round(data.routes[0].duration / 60)} min`);
+      setStatus('');
+    } catch (e) {
+      let totalKm = 0;
+      const newLegs = [];
+      for (let i = 0; i < currStops.length - 1; i++) {
+        const d = haversine(currStops[i], currStops[i+1]);
+        totalKm += d;
+        newLegs.push({ from: currStops[i].name, to: currStops[i+1].name, km: d.toFixed(1), type: 'straight' });
+        routeLineRef.current = L.polyline([[currStops[i].lat, currStops[i].lon], [currStops[i+1].lat, currStops[i+1].lon]], { color: '#ff7a45', weight: 3, dashArray: '6,6' }).addTo(mapRef.current);
+        createDistDraggableLabel((currStops[i].lat + currStops[i+1].lat)/2, (currStops[i].lon + currStops[i+1].lon)/2, `${d.toFixed(1)} km`);
+      }
+      setLegsUI(newLegs);
+      setTotalText(`Total (straight-line): ${totalKm.toFixed(1)} km`);
+      setStatus('Live routing unavailable — showing straight-line distances.');
+    }
+  };
+
+    const exportMap = async (type) => {
+    setStatus('Exporting in High Quality...');
+    
+    // Give the map a moment to ensure all high-res tiles are fully loaded
+    await new Promise(r => setTimeout(r, 800)); 
+    
+    // SCALE: 3 is the magic setting. It captures the map at 3x resolution!
+    const canvas = await html2canvas(mapContainerRef.current, { 
+        useCORS: true, 
+        allowTaint: true,
+        scale: 3, 
+        logging: false
+    });
+    
+    if (type === 'img') {
+      // Save as PNG instead of JPG. PNG is lossless and keeps text/lines perfectly sharp.
+      const link = document.createElement('a');
+      link.download = 'route-map-high-res.png'; 
+      link.href = canvas.toDataURL('image/png'); 
+      link.click();
+    } else {
+      // PDF Export
+      const pdf = new jsPDF({ orientation: 'l', unit: 'pt', format: 'a4' });
+      const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
+      
+      // Use 1.0 (Maximum Quality) for the PDF image
+      const imgData = canvas.toDataURL('image/jpeg', 1.0);
+      const imgProps = pdf.getImageProperties(imgData);
+      const maxH = ph - 160;
+      
+      let mapH = (imgProps.height * pw) / imgProps.width, mapW = pw;
+      if (mapH > maxH) { mapH = maxH; mapW = (imgProps.width * mapH) / imgProps.height; }
+      
+      pdf.addImage(imgData, 'JPEG', (pw - mapW) / 2, 20, mapW, mapH, undefined, 'FAST');
+      
+      // PDF Text
+      pdf.setFontSize(14); pdf.setTextColor(30, 30, 30);
+      let y = 20 + mapH + 30, x = 40;
+      pdf.text("Route Stops & Coordinates:", x, y); y += 20;
+      pdf.setFontSize(10); pdf.setTextColor(80, 80, 80);
+      
+      stopsDataRef.current.forEach((s, i) => {
+        if (y > ph - 30) { if (x === 40) { x = 440; y = 20 + mapH + 50; } else { pdf.addPage(); x = 40; y = 40; } }
+        pdf.text(`${i+1}. ${s.name}   |   ${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`, x, y); y += 16;
+      });
+      pdf.save('route-map-high-res.pdf');
+    }
+    setStatus('');
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="login-wrap">
+        <div className="login-box">
+          <h2>App Login</h2>
+          <input type="password" placeholder="Enter Password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleLogin()} />
+          <button onClick={handleLogin}>Login</button>
+          {loginError && <div className="error-text">Incorrect password.</div>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="wrap">
+      <div id="sidebar" onClick={() => setSuggestions([])}>
+        <h1>Route Planner</h1>
+        <div className="add-row">
+          <div className="autocomplete-wrapper">
+            <input type="text" placeholder="Place name or address" value={searchQuery} onChange={handleSearchInput} onKeyDown={e => e.key === 'Enter' && handleAddSearch()} />
+            {suggestions.length > 0 && (
+              <ul id="suggestions" style={{ display: 'block' }}>
+                {suggestions.map((item, i) => (
+                  <li key={i} onClick={() => { setSearchQuery(''); setSuggestions([]); addDirectPlace(item.name || item.display_name.split(',')[0], parseFloat(item.lat), parseFloat(item.lon)); }}>
+                    <span className="sugg-title">{item.name || item.display_name.split(',')[0]}</span>
+                    <span className="sugg-desc">{item.display_name}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <button onClick={handleAddSearch}>Add</button>
+        </div>
+        
+        <div className="add-col">
+          <input type="text" placeholder="Latitude (e.g. 13°55'23.5&quot;N)" value={latQuery} onChange={e => setLatQuery(e.target.value)} />
+          <input type="text" placeholder="Longitude (e.g. 76°59'09.1&quot;E)" value={lonQuery} onChange={e => setLonQuery(e.target.value)} />
+          <button onClick={handleAddCoords}>Add by Coordinates</button>
+        </div>
+
+        <button className="secondary" onClick={optimizeRoute} style={{ width: '100%', marginBottom: '8px' }}>Optimize order</button>
+        <div className="add-row">
+          <button className="secondary" style={{ flex: 1 }} onClick={() => exportMap('img')}>Save Map (PNG)</button>
+          <button className="secondary" style={{ flex: 1 }} onClick={() => exportMap('pdf')}>Save as PDF</button>
+        </div>
+        
+        <ul id="stops">
+          {stops.map((s, i) => (
+            <li key={s.id}>
+              <span className="name">{i+1}. {s.name}</span>
+              <button onClick={() => renameStop(i)} title="Rename">✎</button>
+              <button onClick={() => removeStop(i)}>✕</button>
+            </li>
+          ))}
+        </ul>
+
+        <div id="legs">
+          {legsUI.map((leg, i) => (
+            <div key={i} className="leg">
+              <b>{leg.from}</b> → <b>{leg.to}</b>: {leg.km} km {leg.type === 'routed' ? `(~${leg.mins} min)` : '(straight-line)'}
+            </div>
+          ))}
+        </div>
+        <div id="total">{totalText}</div>
+        <div id="status">{status}</div>
+      </div>
+      <div id="map" ref={mapContainerRef}></div>
+    </div>
+  );
+}
