@@ -129,3 +129,18 @@ button.secondary { background: #2a3340; color: var(--text); }
     right: 12px;
   }
 }
+
+/* Export Select Dropdown */
+select {
+  padding: 8px; border-radius: 6px; border: 1px solid var(--line); 
+  background: #0f141a; color: var(--text); font-size: 13px; width: 100%; outline: none; cursor: pointer;
+}
+
+/* Fullscreen Loading Overlay during Export */
+.export-overlay {
+  position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+  background: var(--bg); color: var(--accent); z-index: 999999;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: bold; flex-direction: column; gap: 10px;
+}
+.export-overlay span { font-size: 13px; color: var(--muted); font-weight: normal; }

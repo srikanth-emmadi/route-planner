@@ -47,6 +47,10 @@ export default function App() {
   const [loginError, setLoginError] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
+  // Export States
+  const [exportOrientation, setExportOrientation] = useState("landscape");
+  const [isExporting, setIsExporting] = useState(false);
+
   const [status, setStatus] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [suggestions, setSuggestions] = useState([]);
@@ -151,11 +155,9 @@ export default function App() {
 
   const updateStopsUI = () => setStops(stopsDataRef.current.map(s => ({ id: s.id, name: s.name })));
 
-  // IMPROVED: Smoothly zoom map to fit all bounds vertically & horizontally
   const fitMap = () => {
     if (stopsDataRef.current.length === 0) return;
     const bounds = L.latLngBounds(stopsDataRef.current.map(s => [s.lat, s.lon]));
-    // flyToBounds auto-calculates the exact zoom level needed to fit all points
     mapRef.current.flyToBounds(bounds, { padding: [50, 50], duration: 1.2 });
   };
 
@@ -210,7 +212,7 @@ export default function App() {
     updateStopsUI();
     await computeRoute();
     
-    fitMap(); // Auto-fit screen after optimizing
+    fitMap();
     if (window.innerWidth <= 768) setIsMobileOpen(false); 
   };
 
@@ -269,36 +271,61 @@ export default function App() {
     }
   };
 
-    const exportMap = async (type) => {
-    setStatus('Exporting in High Quality...');
+  const exportMap = async (type) => {
+    setIsExporting(true); // Show the loading screen overlay
     if (window.innerWidth <= 768) setIsMobileOpen(false); 
-    
-    await new Promise(r => setTimeout(r, 800)); 
-    
-    // Temporarily hide the Fit Button for a clean screenshot
+
+    // Give React time to render the loading screen
+    await new Promise(r => setTimeout(r, 100));
+
     const fitBtn = document.querySelector('.fit-map-btn');
-    if(fitBtn) fitBtn.style.display = 'none';
+    if (fitBtn) fitBtn.style.display = 'none';
 
-    const canvas = await html2canvas(mapContainerRef.current, { 
-        useCORS: true, allowTaint: true, scale: 3, logging: false
+    const mapEl = mapContainerRef.current;
+    const originalStyle = mapEl.getAttribute('style') || '';
+
+    // FORCE MAP DIMENSIONS BASED ON CHOSEN ORIENTATION
+    if (exportOrientation === 'landscape') {
+      mapEl.style.cssText = 'position: absolute; top: 0; left: 0; width: 1400px; height: 1000px; z-index: -1;';
+    } else {
+      mapEl.style.cssText = 'position: absolute; top: 0; left: 0; width: 1000px; height: 1400px; z-index: -1;';
+    }
+
+    mapRef.current.invalidateSize();
+    if (stopsDataRef.current.length > 0) {
+      const bounds = L.latLngBounds(stopsDataRef.current.map(s => [s.lat, s.lon]));
+      mapRef.current.fitBounds(bounds, { padding: [50, 50], animate: false });
+    }
+
+    // Wait for the tiles to load at the new aspect ratio
+    await new Promise(r => setTimeout(r, 1200));
+
+    // Capture Canvas
+    const canvas = await html2canvas(mapEl, { 
+        useCORS: true, allowTaint: true, scale: 2, logging: false
     });
-    
-    if(fitBtn) fitBtn.style.display = 'flex'; // Bring it back
 
+    // RESTORE MAP TO NORMAL
+    mapEl.setAttribute('style', originalStyle);
+    mapRef.current.invalidateSize();
+    if (stopsDataRef.current.length > 0) {
+      const bounds = L.latLngBounds(stopsDataRef.current.map(s => [s.lat, s.lon]));
+      mapRef.current.fitBounds(bounds, { padding: [50, 50], animate: false });
+    }
+
+    if (fitBtn) fitBtn.style.display = 'flex';
+    setIsExporting(false); // Hide the loading screen
+
+    // === PROCESS THE CAPTURED IMAGE ===
     if (type === 'img') {
       const link = document.createElement('a');
-      link.download = 'route-map-high-res.png'; 
+      link.download = `route-map-${exportOrientation}.png`; 
       link.href = canvas.toDataURL('image/png'); 
       link.click();
     } else {
-      // --- SMART PDF LAYOUT ---
+      // PDF PROCESSING (Automatically detects Landscape vs Portrait from our forced shape)
       const isLandscape = canvas.width > canvas.height;
-      const pdf = new jsPDF({ 
-        orientation: isLandscape ? 'l' : 'p', 
-        unit: 'pt', 
-        format: 'a4' 
-      });
-      
+      const pdf = new jsPDF({ orientation: isLandscape ? 'l' : 'p', unit: 'pt', format: 'a4' });
       const pw = pdf.internal.pageSize.getWidth();
       const ph = pdf.internal.pageSize.getHeight();
       
@@ -308,83 +335,55 @@ export default function App() {
       let mapW, mapH, mapX, mapY, textStartX, textStartY;
 
       if (isLandscape) {
-        // LANDSCAPE: Map Left (65%), Text Right (35%)
+        // Landscape: Map Left, Text Right
         const maxMapW = pw * 0.65;
         const maxMapH = ph - 40;
-        
         mapW = maxMapW;
         mapH = (imgProps.height * mapW) / imgProps.width;
-        
-        if (mapH > maxMapH) {
-          mapH = maxMapH;
-          mapW = (imgProps.width * mapH) / imgProps.height;
-        }
+        if (mapH > maxMapH) { mapH = maxMapH; mapW = (imgProps.width * mapH) / imgProps.height; }
         
         mapX = 20;
-        mapY = (ph - mapH) / 2; // Center vertically
+        mapY = (ph - mapH) / 2; 
         if (mapY < 20) mapY = 20;
         
         textStartX = mapX + mapW + 20;
         textStartY = Math.max(mapY, 40);
       } else {
-        // PORTRAIT: Map Top Row, Text Bottom Row
+        // Portrait: Map Top, Text Bottom
         const maxMapW = pw - 40;
-        const maxMapH = ph * 0.55; // Map takes top 55%
-        
+        const maxMapH = ph * 0.55; 
         mapW = maxMapW;
         mapH = (imgProps.height * mapW) / imgProps.width;
+        if (mapH > maxMapH) { mapH = maxMapH; mapW = (imgProps.width * mapH) / imgProps.height; }
         
-        if (mapH > maxMapH) {
-          mapH = maxMapH;
-          mapW = (imgProps.width * mapH) / imgProps.height;
-        }
-        
-        mapX = (pw - mapW) / 2; // Center horizontally
+        mapX = (pw - mapW) / 2; 
         mapY = 20;
         
         textStartX = 40;
         textStartY = mapY + mapH + 30;
       }
 
-      // Draw the Map
       pdf.addImage(imgData, 'JPEG', mapX, mapY, mapW, mapH, undefined, 'FAST');
       
-      // Draw Text Headers
-      pdf.setFontSize(14); 
-      pdf.setFont('helvetica', 'bold');
-      pdf.setTextColor(30, 30, 30);
+      pdf.setFontSize(14); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(30, 30, 30);
       pdf.text("Route Stops & Coordinates:", textStartX, textStartY); 
       
       let currentY = textStartY + 25;
       let currentX = textStartX;
 
-      // Draw Stops
       stopsDataRef.current.forEach((s, i) => {
-        // If text hits the bottom of the page, create a new page
-        if (currentY > ph - 40) {
-          pdf.addPage();
-          currentY = 40;
-          currentX = 40; // Reset text to left margin on a fresh page
-        }
-        
-        // Stop Name (Bold)
-        pdf.setFontSize(11);
-        pdf.setFont('helvetica', 'bold');
-        pdf.setTextColor(40, 40, 40);
+        if (currentY > ph - 40) { pdf.addPage(); currentY = 40; currentX = 40; }
+        pdf.setFontSize(11); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(40, 40, 40);
         pdf.text(`${i+1}. ${s.name}`, currentX, currentY);
         
-        // Coordinates (Normal, slightly gray, indented)
-        pdf.setFontSize(10);
-        pdf.setFont('helvetica', 'normal');
-        pdf.setTextColor(100, 100, 100);
+        pdf.setFontSize(10); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(100, 100, 100);
         pdf.text(`     ${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`, currentX, currentY + 12);
         
-        currentY += 28; // Space between stops
+        currentY += 28; 
       });
 
-      pdf.save('route-map-high-res.pdf');
+      pdf.save(`route-map-${exportOrientation}.pdf`);
     }
-    setStatus('');
   };
 
   if (!isAuthenticated) {
@@ -402,6 +401,14 @@ export default function App() {
 
   return (
     <div className="wrap">
+      {/* Loading Overlay when generating Export */}
+      {isExporting && (
+        <div className="export-overlay">
+          Generating {exportOrientation} map...
+          <span>Please wait, this takes a few seconds.</span>
+        </div>
+      )}
+
       <button className="mobile-open-btn" onClick={() => setIsMobileOpen(true)}>
         ☰ Open Planner
       </button>
@@ -437,10 +444,19 @@ export default function App() {
           <button onClick={handleAddCoords}>Add by Coordinates</button>
         </div>
 
-        <button className="secondary" onClick={optimizeRoute} style={{ width: '100%', marginBottom: '8px' }}>Optimize order</button>
-        <div className="add-row">
-          <button className="secondary" style={{ flex: 1 }} onClick={() => exportMap('img')}>Save Map (PNG)</button>
-          <button className="secondary" style={{ flex: 1 }} onClick={() => exportMap('pdf')}>Save as PDF</button>
+        <button className="secondary" onClick={optimizeRoute} style={{ width: '100%', marginBottom: '14px' }}>Optimize order</button>
+        
+        {/* NEW EXPORT MENU WITH DROPDOWN */}
+        <div className="add-col" style={{ background: 'transparent', border: '1px solid var(--accent)' }}>
+          <label style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 'bold' }}>EXPORT MAP AS:</label>
+          <select value={exportOrientation} onChange={e => setExportOrientation(e.target.value)}>
+            <option value="landscape">Horizontal (Landscape)</option>
+            <option value="portrait">Vertical (Portrait)</option>
+          </select>
+          <div className="add-row" style={{ marginBottom: 0 }}>
+            <button className="secondary" style={{ flex: 1 }} onClick={() => exportMap('img')}>Save PNG</button>
+            <button className="secondary" style={{ flex: 1 }} onClick={() => exportMap('pdf')}>Save PDF</button>
+          </div>
         </div>
         
         <ul id="stops">
@@ -468,7 +484,6 @@ export default function App() {
       
       <div id="map" ref={mapContainerRef}></div>
 
-      {/* NEW: Floating Fit Map Button */}
       {stops.length > 0 && (
         <button className="fit-map-btn" onClick={fitMap} title="Fit all locations on screen">
           ⛶ Fit Map
