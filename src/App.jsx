@@ -5,7 +5,7 @@ import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import './App.css';
 
-// ====== ADD THIS BLOCK TO FIX BROKEN PINS ======
+// ====== FIX BROKEN PINS ======
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
@@ -16,7 +16,7 @@ L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
   shadowUrl: markerShadow,
 });
-// ===============================================
+// =============================
 
 const APP_PASSWORD = "admin";
 
@@ -45,7 +45,6 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState(false);
-
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   const [status, setStatus] = useState("");
@@ -68,10 +67,7 @@ export default function App() {
   useEffect(() => {
     if (isAuthenticated && mapContainerRef.current && !mapRef.current) {
       mapRef.current = L.map(mapContainerRef.current, { preferCanvas: true, zoomControl: false }).setView([17.385, 78.486], 6);
-      
-      // Move zoom controls to top right so they don't get hidden behind the menu on mobile
       L.control.zoom({ position: 'topright' }).addTo(mapRef.current);
-      
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(mapRef.current);
       distLabelsLayerRef.current = L.layerGroup().addTo(mapRef.current);
     }
@@ -116,12 +112,11 @@ export default function App() {
     stopsDataRef.current.push(newStop);
     updateStopsUI();
     
-    // Zoom to the newly added location
     mapRef.current.flyTo([lat, lon], 12, { duration: 1.5 });
     
     await computeRoute();
     setStatus('');
-    if (window.innerWidth <= 768) setIsMobileOpen(false); // Auto-close menu on mobile after adding
+    if (window.innerWidth <= 768) setIsMobileOpen(false); 
   };
 
   const handleAddSearch = async () => {
@@ -156,18 +151,20 @@ export default function App() {
 
   const updateStopsUI = () => setStops(stopsDataRef.current.map(s => ({ id: s.id, name: s.name })));
 
-  // NEW FUNCTION: Smoothly pan and zoom to a location when clicked
+  // IMPROVED: Smoothly zoom map to fit all bounds vertically & horizontally
+  const fitMap = () => {
+    if (stopsDataRef.current.length === 0) return;
+    const bounds = L.latLngBounds(stopsDataRef.current.map(s => [s.lat, s.lon]));
+    // flyToBounds auto-calculates the exact zoom level needed to fit all points
+    mapRef.current.flyToBounds(bounds, { padding: [50, 50], duration: 1.2 });
+  };
+
   const zoomToLocation = (index) => {
     const stop = stopsDataRef.current[index];
     if (stop && mapRef.current) {
-      // Fly to the coordinates and zoom in nicely
       mapRef.current.flyTo([stop.lat, stop.lon], 13, { duration: 1.5 });
-      stop.marker.openPopup(); // Open the location pin's popup
-      
-      // If on mobile, hide the menu so the user can see the map!
-      if (window.innerWidth <= 768) {
-        setIsMobileOpen(false);
-      }
+      stop.marker.openPopup(); 
+      if (window.innerWidth <= 768) setIsMobileOpen(false);
     }
   };
 
@@ -213,11 +210,8 @@ export default function App() {
     updateStopsUI();
     await computeRoute();
     
-    // Fit map to show the entire new route
-    const bounds = L.latLngBounds(stopsDataRef.current.map(s => [s.lat, s.lon]));
-    mapRef.current.flyToBounds(bounds, { padding: [40, 40], duration: 1.5 });
-    
-    if (window.innerWidth <= 768) setIsMobileOpen(false); // Close menu on mobile
+    fitMap(); // Auto-fit screen after optimizing
+    if (window.innerWidth <= 768) setIsMobileOpen(false); 
   };
 
   const createDistDraggableLabel = (midLat, midLon, kmText) => {
@@ -277,14 +271,20 @@ export default function App() {
 
   const exportMap = async (type) => {
     setStatus('Exporting in High Quality...');
-    if (window.innerWidth <= 768) setIsMobileOpen(false); // Close menu so it isn't in the screenshot
+    if (window.innerWidth <= 768) setIsMobileOpen(false); 
     
     await new Promise(r => setTimeout(r, 800)); 
     
+    // Temporarily hide the Fit Button for a clean screenshot
+    const fitBtn = document.querySelector('.fit-map-btn');
+    if(fitBtn) fitBtn.style.display = 'none';
+
     const canvas = await html2canvas(mapContainerRef.current, { 
         useCORS: true, allowTaint: true, scale: 3, logging: false
     });
     
+    if(fitBtn) fitBtn.style.display = 'flex'; // Bring it back
+
     if (type === 'img') {
       const link = document.createElement('a');
       link.download = 'route-map-high-res.png'; 
@@ -332,12 +332,10 @@ export default function App() {
 
   return (
     <div className="wrap">
-      {/* Mobile Floating Button */}
       <button className="mobile-open-btn" onClick={() => setIsMobileOpen(true)}>
         ☰ Open Planner
       </button>
 
-      {/* Dark overlay behind sidebar on mobile */}
       <div className={`mobile-overlay ${isMobileOpen ? 'open' : ''}`} onClick={() => setIsMobileOpen(false)}></div>
 
       <div id="sidebar" className={isMobileOpen ? 'open' : ''} onClick={() => setSuggestions([])}>
@@ -378,7 +376,6 @@ export default function App() {
         <ul id="stops">
           {stops.map((s, i) => (
             <li key={s.id}>
-              {/* Click the name to zoom! */}
               <span className="name" onClick={() => zoomToLocation(i)} title="Click to view on map">
                 {i+1}. {s.name}
               </span>
@@ -400,6 +397,14 @@ export default function App() {
       </div>
       
       <div id="map" ref={mapContainerRef}></div>
+
+      {/* NEW: Floating Fit Map Button */}
+      {stops.length > 0 && (
+        <button className="fit-map-btn" onClick={fitMap} title="Fit all locations on screen">
+          ⛶ Fit Map
+        </button>
+      )}
+
     </div>
   );
 }

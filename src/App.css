@@ -102,3 +102,30 @@ button.secondary { background: #2a3340; color: var(--text); }
   }
   #sidebar.open { left: 0; }
 }
+
+/* Floating Fit Map Button */
+.fit-map-btn {
+  position: absolute;
+  top: 90px;
+  right: 12px;
+  z-index: 1000;
+  background: var(--panel);
+  color: var(--text);
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+  transition: background 0.2s;
+}
+.fit-map-btn:hover { background: #2a3340; }
+
+@media (max-width: 768px) {
+  .fit-map-btn {
+    top: auto;
+    bottom: 140px; /* Sits cleanly above the Open Planner button */
+    right: 12px;
+  }
+}
