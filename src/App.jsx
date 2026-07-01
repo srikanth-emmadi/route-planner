@@ -269,7 +269,7 @@ export default function App() {
     }
   };
 
-  const exportMap = async (type) => {
+    const exportMap = async (type) => {
     setStatus('Exporting in High Quality...');
     if (window.innerWidth <= 768) setIsMobileOpen(false); 
     
@@ -291,27 +291,97 @@ export default function App() {
       link.href = canvas.toDataURL('image/png'); 
       link.click();
     } else {
-      const pdf = new jsPDF({ orientation: 'l', unit: 'pt', format: 'a4' });
-      const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
+      // --- SMART PDF LAYOUT ---
+      const isLandscape = canvas.width > canvas.height;
+      const pdf = new jsPDF({ 
+        orientation: isLandscape ? 'l' : 'p', 
+        unit: 'pt', 
+        format: 'a4' 
+      });
+      
+      const pw = pdf.internal.pageSize.getWidth();
+      const ph = pdf.internal.pageSize.getHeight();
       
       const imgData = canvas.toDataURL('image/jpeg', 1.0);
       const imgProps = pdf.getImageProperties(imgData);
-      const maxH = ph - 160;
+
+      let mapW, mapH, mapX, mapY, textStartX, textStartY;
+
+      if (isLandscape) {
+        // LANDSCAPE: Map Left (65%), Text Right (35%)
+        const maxMapW = pw * 0.65;
+        const maxMapH = ph - 40;
+        
+        mapW = maxMapW;
+        mapH = (imgProps.height * mapW) / imgProps.width;
+        
+        if (mapH > maxMapH) {
+          mapH = maxMapH;
+          mapW = (imgProps.width * mapH) / imgProps.height;
+        }
+        
+        mapX = 20;
+        mapY = (ph - mapH) / 2; // Center vertically
+        if (mapY < 20) mapY = 20;
+        
+        textStartX = mapX + mapW + 20;
+        textStartY = Math.max(mapY, 40);
+      } else {
+        // PORTRAIT: Map Top Row, Text Bottom Row
+        const maxMapW = pw - 40;
+        const maxMapH = ph * 0.55; // Map takes top 55%
+        
+        mapW = maxMapW;
+        mapH = (imgProps.height * mapW) / imgProps.width;
+        
+        if (mapH > maxMapH) {
+          mapH = maxMapH;
+          mapW = (imgProps.width * mapH) / imgProps.height;
+        }
+        
+        mapX = (pw - mapW) / 2; // Center horizontally
+        mapY = 20;
+        
+        textStartX = 40;
+        textStartY = mapY + mapH + 30;
+      }
+
+      // Draw the Map
+      pdf.addImage(imgData, 'JPEG', mapX, mapY, mapW, mapH, undefined, 'FAST');
       
-      let mapH = (imgProps.height * pw) / imgProps.width, mapW = pw;
-      if (mapH > maxH) { mapH = maxH; mapW = (imgProps.width * mapH) / imgProps.height; }
+      // Draw Text Headers
+      pdf.setFontSize(14); 
+      pdf.setFont('helvetica', 'bold');
+      pdf.setTextColor(30, 30, 30);
+      pdf.text("Route Stops & Coordinates:", textStartX, textStartY); 
       
-      pdf.addImage(imgData, 'JPEG', (pw - mapW) / 2, 20, mapW, mapH, undefined, 'FAST');
-      
-      pdf.setFontSize(14); pdf.setTextColor(30, 30, 30);
-      let y = 20 + mapH + 30, x = 40;
-      pdf.text("Route Stops & Coordinates:", x, y); y += 20;
-      pdf.setFontSize(10); pdf.setTextColor(80, 80, 80);
-      
+      let currentY = textStartY + 25;
+      let currentX = textStartX;
+
+      // Draw Stops
       stopsDataRef.current.forEach((s, i) => {
-        if (y > ph - 30) { if (x === 40) { x = 440; y = 20 + mapH + 50; } else { pdf.addPage(); x = 40; y = 40; } }
-        pdf.text(`${i+1}. ${s.name}   |   ${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`, x, y); y += 16;
+        // If text hits the bottom of the page, create a new page
+        if (currentY > ph - 40) {
+          pdf.addPage();
+          currentY = 40;
+          currentX = 40; // Reset text to left margin on a fresh page
+        }
+        
+        // Stop Name (Bold)
+        pdf.setFontSize(11);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(40, 40, 40);
+        pdf.text(`${i+1}. ${s.name}`, currentX, currentY);
+        
+        // Coordinates (Normal, slightly gray, indented)
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setTextColor(100, 100, 100);
+        pdf.text(`     ${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`, currentX, currentY + 12);
+        
+        currentY += 28; // Space between stops
       });
+
       pdf.save('route-map-high-res.pdf');
     }
     setStatus('');
