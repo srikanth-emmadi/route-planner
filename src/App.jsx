@@ -282,13 +282,27 @@ export default function App() {
     const mapEl = mapContainerRef.current;
     const originalStyle = mapEl.getAttribute('style') || '';
 
-    // FORCE MAP TO PERFECT A4 ASPECT RATIOS
-    if (exportOrientation === 'landscape') {
-      mapEl.style.cssText = 'position: absolute; top: 0; left: 0; width: 1600px; height: 800px; z-index: -1;';
-    } else {
-      mapEl.style.cssText = 'position: absolute; top: 0; left: 0; width: 1000px; height: 1200px; z-index: -1;';
-    }
-
+    // ==============================================================
+    // NEW SMART DIMENSION CALCULATOR (Perfect fit with no empty space)
+    // ==============================================================
+    const isLandscape = exportOrientation === 'landscape';
+    const pdf = new jsPDF({ orientation: isLandscape ? 'l' : 'p', unit: 'pt', format: 'a4' });
+    const pw = pdf.internal.pageSize.getWidth();
+    const ph = pdf.internal.pageSize.getHeight();
+    
+    const margin = 30; // 30pt margin on all sides
+    
+    // The exact pixel size we want the map to fill on the PDF page
+    const targetMapW = pw - (margin * 2);
+    const targetMapH = isLandscape ? (ph * 0.65) : (ph * 0.58); 
+    
+    // Force the HTML Map container to match this EXACT aspect ratio before capturing
+    // (Multiplied by 2.5 to ensure the screenshot is captured in high definition)
+    const domW = Math.round(targetMapW * 2.5);
+    const domH = Math.round(targetMapH * 2.5);
+    
+    mapEl.style.cssText = `position: absolute; top: 0; left: 0; width: ${domW}px; height: ${domH}px; z-index: -1;`;
+    
     mapRef.current.invalidateSize();
     if (stopsDataRef.current.length > 0) {
       const bounds = L.latLngBounds(stopsDataRef.current.map(s => [s.lat, s.lon]));
@@ -318,45 +332,25 @@ export default function App() {
       link.href = canvas.toDataURL('image/png'); 
       link.click();
     } else {
-      // PDF PROCESSING MATCHING SCREENSHOT EXACTLY
-      const isLandscape = exportOrientation === 'landscape';
-      const pdf = new jsPDF({ orientation: isLandscape ? 'l' : 'p', unit: 'pt', format: 'a4' });
-      const pw = pdf.internal.pageSize.getWidth();
-      const ph = pdf.internal.pageSize.getHeight();
       
       const imgData = canvas.toDataURL('image/jpeg', 1.0);
-      const imgProps = pdf.getImageProperties(imgData);
 
-      const maxMapW = pw - 40; 
-      const maxMapH = isLandscape ? (ph * 0.70) : (ph * 0.55); 
-      
-      let mapW = maxMapW;
-      let mapH = (imgProps.height * mapW) / imgProps.width;
-      
-      if (mapH > maxMapH) { 
-        mapH = maxMapH; 
-        mapW = (imgProps.width * mapH) / imgProps.height; 
-      }
-      
-      const mapX = (pw - mapW) / 2; 
-      const mapY = 20;
-
-      // Draw Top Map
-      pdf.addImage(imgData, 'JPEG', mapX, mapY, mapW, mapH, undefined, 'FAST');
+      // Paste the image into the PDF at the exact dimensions we calculated
+      pdf.addImage(imgData, 'JPEG', margin, margin, targetMapW, targetMapH, undefined, 'FAST');
       
       // Draw Title
-      const textStartY = mapY + mapH + 30;
+      const textStartY = margin + targetMapH + 30;
       pdf.setFontSize(14); 
-      pdf.setFont('helvetica', 'normal'); 
+      pdf.setFont('helvetica', 'bold'); 
       pdf.setTextColor(30, 30, 30);
-      pdf.text("Route Stops & Coordinates:", 40, textStartY); 
+      pdf.text("Route Stops & Coordinates:", margin, textStartY); 
       
       const listStartY = textStartY + 25;
 
       if (isLandscape) {
         // TWO COLUMNS FOR LANDSCAPE
-        const col1X = 40;
-        const col2X = (pw / 2) + 20;
+        const col1X = margin;
+        const col2X = (pw / 2) + 15;
         const itemsPerCol = Math.ceil(stopsDataRef.current.length / 2);
 
         let currentY1 = listStartY;
@@ -388,7 +382,7 @@ export default function App() {
           pdf.setFontSize(10); 
           pdf.setFont('helvetica', 'normal'); 
           pdf.setTextColor(60, 60, 60);
-          pdf.text(`${i+1}. ${s.name}   |   ${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`, 40, currentY);
+          pdf.text(`${i+1}. ${s.name}   |   ${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`, margin, currentY);
           currentY += 20;
         });
       }
