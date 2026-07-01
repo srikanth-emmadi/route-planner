@@ -47,7 +47,6 @@ export default function App() {
   const [loginError, setLoginError] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
-  // Export States
   const [exportOrientation, setExportOrientation] = useState("landscape");
   const [isExporting, setIsExporting] = useState(false);
 
@@ -272,10 +271,9 @@ export default function App() {
   };
 
   const exportMap = async (type) => {
-    setIsExporting(true); // Show the loading screen overlay
+    setIsExporting(true); 
     if (window.innerWidth <= 768) setIsMobileOpen(false); 
 
-    // Give React time to render the loading screen
     await new Promise(r => setTimeout(r, 100));
 
     const fitBtn = document.querySelector('.fit-map-btn');
@@ -284,11 +282,11 @@ export default function App() {
     const mapEl = mapContainerRef.current;
     const originalStyle = mapEl.getAttribute('style') || '';
 
-    // FORCE MAP DIMENSIONS BASED ON CHOSEN ORIENTATION
+    // FORCE MAP TO PERFECT A4 ASPECT RATIOS
     if (exportOrientation === 'landscape') {
-      mapEl.style.cssText = 'position: absolute; top: 0; left: 0; width: 1400px; height: 1000px; z-index: -1;';
+      mapEl.style.cssText = 'position: absolute; top: 0; left: 0; width: 1600px; height: 800px; z-index: -1;';
     } else {
-      mapEl.style.cssText = 'position: absolute; top: 0; left: 0; width: 1000px; height: 1400px; z-index: -1;';
+      mapEl.style.cssText = 'position: absolute; top: 0; left: 0; width: 1000px; height: 1200px; z-index: -1;';
     }
 
     mapRef.current.invalidateSize();
@@ -297,10 +295,8 @@ export default function App() {
       mapRef.current.fitBounds(bounds, { padding: [50, 50], animate: false });
     }
 
-    // Wait for the tiles to load at the new aspect ratio
     await new Promise(r => setTimeout(r, 1200));
 
-    // Capture Canvas
     const canvas = await html2canvas(mapEl, { 
         useCORS: true, allowTaint: true, scale: 2, logging: false
     });
@@ -314,17 +310,16 @@ export default function App() {
     }
 
     if (fitBtn) fitBtn.style.display = 'flex';
-    setIsExporting(false); // Hide the loading screen
+    setIsExporting(false); 
 
-    // === PROCESS THE CAPTURED IMAGE ===
     if (type === 'img') {
       const link = document.createElement('a');
       link.download = `route-map-${exportOrientation}.png`; 
       link.href = canvas.toDataURL('image/png'); 
       link.click();
     } else {
-      // PDF PROCESSING (Automatically detects Landscape vs Portrait from our forced shape)
-      const isLandscape = canvas.width > canvas.height;
+      // PDF PROCESSING MATCHING SCREENSHOT EXACTLY
+      const isLandscape = exportOrientation === 'landscape';
       const pdf = new jsPDF({ orientation: isLandscape ? 'l' : 'p', unit: 'pt', format: 'a4' });
       const pw = pdf.internal.pageSize.getWidth();
       const ph = pdf.internal.pageSize.getHeight();
@@ -332,55 +327,71 @@ export default function App() {
       const imgData = canvas.toDataURL('image/jpeg', 1.0);
       const imgProps = pdf.getImageProperties(imgData);
 
-      let mapW, mapH, mapX, mapY, textStartX, textStartY;
-
-      if (isLandscape) {
-        // Landscape: Map Left, Text Right
-        const maxMapW = pw * 0.65;
-        const maxMapH = ph - 40;
-        mapW = maxMapW;
-        mapH = (imgProps.height * mapW) / imgProps.width;
-        if (mapH > maxMapH) { mapH = maxMapH; mapW = (imgProps.width * mapH) / imgProps.height; }
-        
-        mapX = 20;
-        mapY = (ph - mapH) / 2; 
-        if (mapY < 20) mapY = 20;
-        
-        textStartX = mapX + mapW + 20;
-        textStartY = Math.max(mapY, 40);
-      } else {
-        // Portrait: Map Top, Text Bottom
-        const maxMapW = pw - 40;
-        const maxMapH = ph * 0.55; 
-        mapW = maxMapW;
-        mapH = (imgProps.height * mapW) / imgProps.width;
-        if (mapH > maxMapH) { mapH = maxMapH; mapW = (imgProps.width * mapH) / imgProps.height; }
-        
-        mapX = (pw - mapW) / 2; 
-        mapY = 20;
-        
-        textStartX = 40;
-        textStartY = mapY + mapH + 30;
+      const maxMapW = pw - 40; 
+      const maxMapH = isLandscape ? (ph * 0.70) : (ph * 0.55); 
+      
+      let mapW = maxMapW;
+      let mapH = (imgProps.height * mapW) / imgProps.width;
+      
+      if (mapH > maxMapH) { 
+        mapH = maxMapH; 
+        mapW = (imgProps.width * mapH) / imgProps.height; 
       }
+      
+      const mapX = (pw - mapW) / 2; 
+      const mapY = 20;
 
+      // Draw Top Map
       pdf.addImage(imgData, 'JPEG', mapX, mapY, mapW, mapH, undefined, 'FAST');
       
-      pdf.setFontSize(14); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(30, 30, 30);
-      pdf.text("Route Stops & Coordinates:", textStartX, textStartY); 
+      // Draw Title
+      const textStartY = mapY + mapH + 30;
+      pdf.setFontSize(14); 
+      pdf.setFont('helvetica', 'normal'); 
+      pdf.setTextColor(30, 30, 30);
+      pdf.text("Route Stops & Coordinates:", 40, textStartY); 
       
-      let currentY = textStartY + 25;
-      let currentX = textStartX;
+      const listStartY = textStartY + 25;
 
-      stopsDataRef.current.forEach((s, i) => {
-        if (currentY > ph - 40) { pdf.addPage(); currentY = 40; currentX = 40; }
-        pdf.setFontSize(11); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(40, 40, 40);
-        pdf.text(`${i+1}. ${s.name}`, currentX, currentY);
-        
-        pdf.setFontSize(10); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(100, 100, 100);
-        pdf.text(`     ${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`, currentX, currentY + 12);
-        
-        currentY += 28; 
-      });
+      if (isLandscape) {
+        // TWO COLUMNS FOR LANDSCAPE
+        const col1X = 40;
+        const col2X = (pw / 2) + 20;
+        const itemsPerCol = Math.ceil(stopsDataRef.current.length / 2);
+
+        let currentY1 = listStartY;
+        let currentY2 = listStartY;
+
+        stopsDataRef.current.forEach((s, i) => {
+          const isCol2 = i >= itemsPerCol;
+          const x = isCol2 ? col2X : col1X;
+          let y = isCol2 ? currentY2 : currentY1;
+
+          if (y > ph - 30) { 
+            pdf.addPage(); 
+            currentY1 = 40; currentY2 = 40; y = 40; 
+          }
+          
+          pdf.setFontSize(10); 
+          pdf.setFont('helvetica', 'normal'); 
+          pdf.setTextColor(60, 60, 60);
+          pdf.text(`${i+1}. ${s.name}   |   ${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`, x, y);
+          
+          if (isCol2) currentY2 += 20; else currentY1 += 20;
+        });
+      } else {
+        // ONE COLUMN FOR PORTRAIT
+        let currentY = listStartY;
+        stopsDataRef.current.forEach((s, i) => {
+          if (currentY > ph - 30) { pdf.addPage(); currentY = 40; }
+          
+          pdf.setFontSize(10); 
+          pdf.setFont('helvetica', 'normal'); 
+          pdf.setTextColor(60, 60, 60);
+          pdf.text(`${i+1}. ${s.name}   |   ${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`, 40, currentY);
+          currentY += 20;
+        });
+      }
 
       pdf.save(`route-map-${exportOrientation}.pdf`);
     }
@@ -401,7 +412,6 @@ export default function App() {
 
   return (
     <div className="wrap">
-      {/* Loading Overlay when generating Export */}
       {isExporting && (
         <div className="export-overlay">
           Generating {exportOrientation} map...
@@ -446,7 +456,6 @@ export default function App() {
 
         <button className="secondary" onClick={optimizeRoute} style={{ width: '100%', marginBottom: '14px' }}>Optimize order</button>
         
-        {/* NEW EXPORT MENU WITH DROPDOWN */}
         <div className="add-col" style={{ background: 'transparent', border: '1px solid var(--accent)' }}>
           <label style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 'bold' }}>EXPORT MAP AS:</label>
           <select value={exportOrientation} onChange={e => setExportOrientation(e.target.value)}>
