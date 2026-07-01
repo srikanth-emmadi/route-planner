@@ -15,7 +15,7 @@ body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: va
 .sidebar-header h1 { font-size: 18px; margin: 0; color: var(--text); font-weight: 600; }
 
 /* Map Base */
-#map { flex: 1; height: 100vh; }
+#map { flex: 1; height: 100vh; z-index: 1; }
 
 /* Inputs and Buttons */
 .add-row { display: flex; gap: 6px; margin-bottom: 10px; }
@@ -29,7 +29,8 @@ button.secondary { background: #2a3340; color: var(--text); }
 /* Stops List */
 #stops { list-style: none; padding: 0; margin: 10px 0; }
 #stops li { background: #0f141a; border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin-bottom: 6px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
-#stops li .name { flex: 1; }
+#stops li .name { flex: 1; cursor: pointer; transition: color 0.2s; font-weight: 600; }
+#stops li .name:hover { color: var(--accent); }
 #stops li button { background: transparent; color: var(--muted); padding: 2px 6px; font-size: 14px; }
 #legs { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
 .leg { font-size: 13px; margin-bottom: 6px; color: var(--muted); }
@@ -73,24 +74,22 @@ button.secondary { background: #2a3340; color: var(--text); }
   .wrap { display: block; }
   #map { width: 100vw; height: 100vh; }
   
-  /* Floating pill button at bottom of mobile screen */
+  /* Floating pill button heavily boosted so it stays on top of map */
   .mobile-open-btn {
-    display: block; position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
-    z-index: 999; background: var(--accent); color: #fff; border-radius: 30px;
-    padding: 12px 24px; font-size: 15px; font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    display: block; position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%);
+    z-index: 9999; background: var(--accent); color: #fff; border-radius: 30px;
+    padding: 14px 28px; font-size: 16px; font-weight: bold; box-shadow: 0 6px 20px rgba(0,0,0,0.7);
+    border: 2px solid #fff;
   }
   
-  /* Close button inside sidebar */
   .mobile-close-btn { display: block; background: transparent; border: none; color: var(--text); font-size: 20px; padding: 0; cursor: pointer; }
   
-  /* Dark backdrop when menu is open */
   .mobile-overlay {
     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
     background: rgba(0,0,0,0.6); z-index: 1000; opacity: 0; pointer-events: none; transition: opacity 0.3s ease;
   }
   .mobile-overlay.open { display: block; opacity: 1; pointer-events: auto; }
 
-  /* Slide-out Sidebar */
   #sidebar {
     position: fixed; top: 0; left: -100%; height: 100vh; width: 85%; max-width: 340px;
     transition: left 0.3s ease; z-index: 1001; box-shadow: 4px 0 20px rgba(0,0,0,0.5);

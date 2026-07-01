@@ -33,7 +33,6 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState(false);
 
-  // New state for mobile sidebar
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   const [status, setStatus] = useState("");
@@ -55,7 +54,11 @@ export default function App() {
 
   useEffect(() => {
     if (isAuthenticated && mapContainerRef.current && !mapRef.current) {
-      mapRef.current = L.map(mapContainerRef.current, { preferCanvas: true }).setView([17.385, 78.486], 6);
+      mapRef.current = L.map(mapContainerRef.current, { preferCanvas: true, zoomControl: false }).setView([17.385, 78.486], 6);
+      
+      // Move zoom controls to top right so they don't get hidden behind the menu on mobile
+      L.control.zoom({ position: 'topright' }).addTo(mapRef.current);
+      
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(mapRef.current);
       distLabelsLayerRef.current = L.layerGroup().addTo(mapRef.current);
     }
@@ -99,7 +102,10 @@ export default function App() {
     const newStop = { id: Date.now(), name, lat, lon, marker, labelMarker, leaderLine };
     stopsDataRef.current.push(newStop);
     updateStopsUI();
-    fitMap();
+    
+    // Zoom to the newly added location
+    mapRef.current.flyTo([lat, lon], 12, { duration: 1.5 });
+    
     await computeRoute();
     setStatus('');
     if (window.innerWidth <= 768) setIsMobileOpen(false); // Auto-close menu on mobile after adding
@@ -137,10 +143,19 @@ export default function App() {
 
   const updateStopsUI = () => setStops(stopsDataRef.current.map(s => ({ id: s.id, name: s.name })));
 
-  const fitMap = () => {
-    if (stopsDataRef.current.length === 0) return;
-    const bounds = L.latLngBounds(stopsDataRef.current.map(s => [s.lat, s.lon]));
-    mapRef.current.fitBounds(bounds, { padding: [40, 40] });
+  // NEW FUNCTION: Smoothly pan and zoom to a location when clicked
+  const zoomToLocation = (index) => {
+    const stop = stopsDataRef.current[index];
+    if (stop && mapRef.current) {
+      // Fly to the coordinates and zoom in nicely
+      mapRef.current.flyTo([stop.lat, stop.lon], 13, { duration: 1.5 });
+      stop.marker.openPopup(); // Open the location pin's popup
+      
+      // If on mobile, hide the menu so the user can see the map!
+      if (window.innerWidth <= 768) {
+        setIsMobileOpen(false);
+      }
+    }
   };
 
   const renameStop = async (index) => {
@@ -184,7 +199,12 @@ export default function App() {
     stopsDataRef.current = ordered;
     updateStopsUI();
     await computeRoute();
-    if (window.innerWidth <= 768) setIsMobileOpen(false); // Close menu to show optimized route
+    
+    // Fit map to show the entire new route
+    const bounds = L.latLngBounds(stopsDataRef.current.map(s => [s.lat, s.lon]));
+    mapRef.current.flyToBounds(bounds, { padding: [40, 40], duration: 1.5 });
+    
+    if (window.innerWidth <= 768) setIsMobileOpen(false); // Close menu on mobile
   };
 
   const createDistDraggableLabel = (midLat, midLon, kmText) => {
@@ -301,7 +321,7 @@ export default function App() {
     <div className="wrap">
       {/* Mobile Floating Button */}
       <button className="mobile-open-btn" onClick={() => setIsMobileOpen(true)}>
-        ☰ Menu
+        ☰ Open Planner
       </button>
 
       {/* Dark overlay behind sidebar on mobile */}
@@ -345,7 +365,10 @@ export default function App() {
         <ul id="stops">
           {stops.map((s, i) => (
             <li key={s.id}>
-              <span className="name">{i+1}. {s.name}</span>
+              {/* Click the name to zoom! */}
+              <span className="name" onClick={() => zoomToLocation(i)} title="Click to view on map">
+                {i+1}. {s.name}
+              </span>
               <button onClick={() => renameStop(i)} title="Rename">✎</button>
               <button onClick={() => removeStop(i)}>✕</button>
             </li>
