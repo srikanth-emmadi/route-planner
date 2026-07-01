@@ -5,7 +5,6 @@ import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import './App.css';
 
-// Utils
 const APP_PASSWORD = "admin";
 
 const haversine = (a, b) => {
@@ -30,32 +29,30 @@ const parseDMS = (str) => {
 };
 
 export default function App() {
-  // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState(false);
 
-  // App State
+  // New state for mobile sidebar
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
+
   const [status, setStatus] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [suggestions, setSuggestions] = useState([]);
   const [latQuery, setLatQuery] = useState("");
   const [lonQuery, setLonQuery] = useState("");
   
-  // Data State
-  const [stops, setStops] = useState([]); // UI array
+  const [stops, setStops] = useState([]); 
   const [legsUI, setLegsUI] = useState([]);
   const [totalText, setTotalText] = useState("");
 
-  // Map Refs
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const distLabelsLayerRef = useRef(null);
   const routeLineRef = useRef(null);
-  const stopsDataRef = useRef([]); // Holds Leaflet marker objects
+  const stopsDataRef = useRef([]); 
   const debounceTimer = useRef(null);
 
-  // Initialize Map
   useEffect(() => {
     if (isAuthenticated && mapContainerRef.current && !mapRef.current) {
       mapRef.current = L.map(mapContainerRef.current, { preferCanvas: true }).setView([17.385, 78.486], 6);
@@ -64,13 +61,11 @@ export default function App() {
     }
   }, [isAuthenticated]);
 
-  // Login handler
   const handleLogin = () => {
     if (password === APP_PASSWORD) setIsAuthenticated(true);
     else setLoginError(true);
   };
 
-  // Search handler
   const handleSearchInput = (e) => {
     const query = e.target.value;
     setSearchQuery(query);
@@ -107,6 +102,7 @@ export default function App() {
     fitMap();
     await computeRoute();
     setStatus('');
+    if (window.innerWidth <= 768) setIsMobileOpen(false); // Auto-close menu on mobile after adding
   };
 
   const handleAddSearch = async () => {
@@ -188,6 +184,7 @@ export default function App() {
     stopsDataRef.current = ordered;
     updateStopsUI();
     await computeRoute();
+    if (window.innerWidth <= 768) setIsMobileOpen(false); // Close menu to show optimized route
   };
 
   const createDistDraggableLabel = (midLat, midLon, kmText) => {
@@ -245,32 +242,25 @@ export default function App() {
     }
   };
 
-    const exportMap = async (type) => {
+  const exportMap = async (type) => {
     setStatus('Exporting in High Quality...');
+    if (window.innerWidth <= 768) setIsMobileOpen(false); // Close menu so it isn't in the screenshot
     
-    // Give the map a moment to ensure all high-res tiles are fully loaded
     await new Promise(r => setTimeout(r, 800)); 
     
-    // SCALE: 3 is the magic setting. It captures the map at 3x resolution!
     const canvas = await html2canvas(mapContainerRef.current, { 
-        useCORS: true, 
-        allowTaint: true,
-        scale: 3, 
-        logging: false
+        useCORS: true, allowTaint: true, scale: 3, logging: false
     });
     
     if (type === 'img') {
-      // Save as PNG instead of JPG. PNG is lossless and keeps text/lines perfectly sharp.
       const link = document.createElement('a');
       link.download = 'route-map-high-res.png'; 
       link.href = canvas.toDataURL('image/png'); 
       link.click();
     } else {
-      // PDF Export
       const pdf = new jsPDF({ orientation: 'l', unit: 'pt', format: 'a4' });
       const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
       
-      // Use 1.0 (Maximum Quality) for the PDF image
       const imgData = canvas.toDataURL('image/jpeg', 1.0);
       const imgProps = pdf.getImageProperties(imgData);
       const maxH = ph - 160;
@@ -280,7 +270,6 @@ export default function App() {
       
       pdf.addImage(imgData, 'JPEG', (pw - mapW) / 2, 20, mapW, mapH, undefined, 'FAST');
       
-      // PDF Text
       pdf.setFontSize(14); pdf.setTextColor(30, 30, 30);
       let y = 20 + mapH + 30, x = 40;
       pdf.text("Route Stops & Coordinates:", x, y); y += 20;
@@ -310,8 +299,20 @@ export default function App() {
 
   return (
     <div className="wrap">
-      <div id="sidebar" onClick={() => setSuggestions([])}>
-        <h1>Route Planner</h1>
+      {/* Mobile Floating Button */}
+      <button className="mobile-open-btn" onClick={() => setIsMobileOpen(true)}>
+        ☰ Menu
+      </button>
+
+      {/* Dark overlay behind sidebar on mobile */}
+      <div className={`mobile-overlay ${isMobileOpen ? 'open' : ''}`} onClick={() => setIsMobileOpen(false)}></div>
+
+      <div id="sidebar" className={isMobileOpen ? 'open' : ''} onClick={() => setSuggestions([])}>
+        <div className="sidebar-header">
+          <h1>Route Planner</h1>
+          <button className="mobile-close-btn" onClick={() => setIsMobileOpen(false)}>✕</button>
+        </div>
+
         <div className="add-row">
           <div className="autocomplete-wrapper">
             <input type="text" placeholder="Place name or address" value={searchQuery} onChange={handleSearchInput} onKeyDown={e => e.key === 'Enter' && handleAddSearch()} />
@@ -361,6 +362,7 @@ export default function App() {
         <div id="total">{totalText}</div>
         <div id="status">{status}</div>
       </div>
+      
       <div id="map" ref={mapContainerRef}></div>
     </div>
   );
