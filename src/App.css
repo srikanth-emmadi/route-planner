@@ -75,8 +75,14 @@ button.secondary { background: #2a3340; color: var(--text); }
   #map { width: 100vw; height: 100vh; }
   
   /* Floating pill button heavily boosted so it stays on top of map */
+    /* Floating pill button heavily boosted so it stays on top of map */
   .mobile-open-btn {
-    display: block; position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%);
+    display: block; position: absolute; 
+    
+    /* Increased bottom spacing to avoid phone toolbars */
+    bottom: max(80px, env(safe-area-inset-bottom) + 60px); 
+    
+    left: 50%; transform: translateX(-50%);
     z-index: 9999; background: var(--accent); color: #fff; border-radius: 30px;
     padding: 14px 28px; font-size: 16px; font-weight: bold; box-shadow: 0 6px 20px rgba(0,0,0,0.7);
     border: 2px solid #fff;
